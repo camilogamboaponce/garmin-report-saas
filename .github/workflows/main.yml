@@ -37,6 +37,13 @@ jobs:
     - name: 🔄 Guardar Sesión Actualizada
       if: always()
       uses: actions/cache@v3
+      - name: 🌐 Generar Dashboard Web
+      run: python generar_web.py
+
+    - name: 🚀 Publicar en GitHub Pages
+      uses: stefanzweifel/git-auto-commit-action@v4
       with:
+        commit_message: "Update dashboard web"
+        file_pattern: index.html
         path: .garth
         key: ${{ runner.os }}-garth-${{ github.run_id }}
