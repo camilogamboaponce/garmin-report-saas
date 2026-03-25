@@ -33,7 +33,7 @@ jobs:
         GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
         GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         GMAIL_TO: ${{ secrets.GMAIL_TO }}
-      run: python reporte_offline.py
+      run: python reporte_offlinee.py
     - name: 🔄 Guardar Sesión Actualizada
       if: always()
       uses: actions/cache@v3
