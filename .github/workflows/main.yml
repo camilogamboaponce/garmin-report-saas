@@ -1,0 +1,42 @@
+name: Garmin Report SaaS
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch: 
+
+jobs:
+  run-report:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Descargar código
+      uses: actions/checkout@v3
+    - name: 🐍 Configurar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    - name: 💾 Recuperar Sesión Garmin (Cache)
+      uses: actions/cache@v3
+      with:
+        path: .garth
+        key: ${{ runner.os }}-garth-${{ github.run_id }}
+        restore-keys: |
+          ${{ runner.os }}-garth-
+    - name: 📦 Instalar Librerías
+      run: |
+        python -m pip install --upgrade pip
+        pip install garminconnect garth gpxpy pandas matplotlib fpdf python-dotenv
+    - name: 🚀 Ejecutar Reporte
+      env:
+        GARMIN_USER: ${{ secrets.GARMIN_USER }}
+        GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+        GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        GMAIL_TO: ${{ secrets.GMAIL_TO }}
+      run: python reporte_garmin.py
+    - name: 🔄 Guardar Sesión Actualizada
+      if: always()
+      uses: actions/cache@v3
+      with:
+        path: .garth
+        key: ${{ runner.os }}-garth-${{ github.run_id }}
