@@ -1,64 +1,26 @@
-import os
-import glob
-import smtplib
+import os, glob, smtplib
 from datetime import datetime
 from email.message import EmailMessage
-
 import gpxpy
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import matplotlib.colors as mcolors
 from fpdf import FPDF
 from dotenv import load_dotenv
 
-# --- CONFIGURACIÓN ---
 load_dotenv()
-BASE_DIR = os.getcwd() # GitHub corre desde la raíz del repo
+BASE_DIR = os.getcwd()
 DATA_FOLDER = os.path.join(BASE_DIR, "data")
 
-# --- VALORES MANUALES (Simulando Garmin) ---
-# Puedes cambiar estos valores para ver cómo cambia el PDF
-DATOS_MOCK = {
-    "hrv": 68,             # Ms (68 es "Equilibrado")
-    "sleep_score": 85,      # 0 a 100
-    "sleep_quality": "Buena",
-    "sueño_fases": {
-        "profundo": 90,     # Minutos
-        "ligero": 320,
-        "rem": 110,
-        "despierto": 15
-    }
-}
+# Simulación de Biometría (Para que no esté vacío)
+BIO = {"hrv": 68, "sleep": 85, "status": "Óptimo"}
 
-# --- FUNCIONES DE APOYO (Igual que el original) ---
 def format_duration(minutos):
-    h, m = minutos // 60, minutos % 60
-    return f"{h}h {m}m" if h > 0 else f"{m}m"
+    return f"{int(minutos // 60)}h {int(minutos % 60)}m"
 
-def analizar_hrv(valor):
-    if valor >= 65: return "Equilibrado", (0, 128, 0), "Sistema nervioso en equilibrio."
-    elif 55 <= valor < 65: return "Tendencia Equilibrada", (218, 165, 32), "Recuperación en curso."
-    return "Desequilibrado", (200, 0, 0), "Prioriza descanso."
-
-def evaluar_riesgo_lesion(tsb, hrv, sleep_score):
-    puntos = 0
-    if tsb < -15: puntos += 30
-    if hrv < 55: puntos += 40
-    if sleep_score < 75: puntos += 30
-    pos = (puntos / 100) * 6
-    label = "Alto" if puntos >= 70 else "Medio" if puntos >= 30 else "Bajo"
-    col = (200, 0, 0) if puntos >= 70 else (218, 165, 32) if puntos >= 30 else (0, 128, 0)
-    return label, col, pos
-
-# --- PROCESAMIENTO DE ARCHIVOS GPX ---
 def obtener_actividades():
     reg = []
     archivos = glob.glob(os.path.join(DATA_FOLDER, "*.gpx"))
-    print(f"📁 Buscando archivos en: {DATA_FOLDER}")
-    print(f"🔎 Encontrados {len(archivos)} archivos GPX.")
-    
     for archivo in archivos:
         try:
             with open(archivo, 'r') as f:
@@ -66,71 +28,82 @@ def obtener_actividades():
             for track in gpx.tracks:
                 bounds = track.get_time_bounds()
                 if bounds.start_time:
-                    reg.append({"Fecha": bounds.start_time.replace(tzinfo=None), "Duracion": track.get_duration()/60})
-        except Exception as e:
-            print(f"❌ Error leyendo {archivo}: {e}")
-            continue
+                    dist = track.get_moving_data().moving_distance / 1000
+                    dur = track.get_duration() / 60
+                    reg.append({"Fecha": bounds.start_time.replace(tzinfo=None), "Distancia": dist, "Duracion": dur})
+        except: continue
     return pd.DataFrame(reg).sort_values("Fecha") if reg else pd.DataFrame()
 
 def calcular_carga(df):
-    hist = df.groupby(df["Fecha"].dt.date)["Duracion"].sum().reset_index()
-    hist.columns = ["Fecha", "Carga"]
+    hist = df.groupby(df["Fecha"].dt.date).agg({"Duracion": "sum", "Distancia": "sum"}).reset_index()
+    hist.columns = ["Fecha", "Carga", "Distancia"]
     hist["Fecha"] = pd.to_datetime(hist["Fecha"])
     hist["ATL"] = hist["Carga"].ewm(span=7, adjust=False).mean()
     hist["CTL"] = hist["Carga"].ewm(span=42, adjust=False).mean()
     hist["TSB"] = hist["CTL"] - hist["ATL"]
-    return {"atl": hist["ATL"].iloc[-1], "ctl": hist["CTL"].iloc[-1], "tsb": hist["TSB"].iloc[-1], "hist": hist}
+    return {"atl": hist["ATL"].iloc[-1], "ctl": hist["CTL"].iloc[-1], "tsb": hist["TSB"].iloc[-1], "hist": hist, "total_km": hist["Distancia"].sum()}
 
-# --- GENERACIÓN DE VISUALES Y PDF ---
-def generar_visuales(fases, carga_info, hrv_val, sleep_val):
-    # Dona de Sueño
-    sizes = [fases['profundo'], fases['ligero'], fases['rem'], fases['despierto']]
-    colors = ['#4a90e2', '#74b9ff', '#a29bfe', '#ff7675']
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.pie(sizes, colors=colors, startangle=90, wedgeprops=dict(width=0.3))
-    total_min = sum(sizes)
-    ax.text(0, 0, f"{format_duration(total_min)}\nTotal", ha='center', va='center', fontsize=12, fontweight='bold')
-    plt.savefig("sleep_chart.png", transparent=True, dpi=100, bbox_inches='tight')
-    plt.close()
-
-    # Gráfico de Carga
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(carga_info['hist']["Fecha"], carga_info['hist']["CTL"], label="Fitness (CTL)", color='#1f77b4', lw=2)
-    ax.fill_between(carga_info['hist']["Fecha"], carga_info['hist']["TSB"], color='#ffeaa7', alpha=0.4, label="Balance (TSB)")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
-    plt.legend(); plt.grid(alpha=0.2)
-    plt.savefig("load_chart.png", dpi=100, bbox_inches='tight')
-    plt.close()
-
-def generar_pdf(carga, hoy, bio):
-    generar_visuales(bio['sueño_fases'], carga, bio['hrv'], bio['sleep_score'])
+def generar_pdf(carga, df_last):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.cell(0, 15, "REPORTE OFFLINE (Archivos Locales)", ln=True, align="C")
     
-    pdf.ln(10)
-    pdf.set_font("Helvetica", "B", 14); pdf.cell(0, 10, "Métricas Biométricas (Simuladas):", ln=True)
+    # Encabezado Estilo "SaaS"
+    pdf.set_fill_color(31, 119, 180) # Azul Garmin
+    pdf.rect(0, 0, 210, 40, 'F')
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.cell(0, 20, "DASHBOARD DEL ATLETA", ln=True, align="C")
     pdf.set_font("Helvetica", "", 12)
-    pdf.cell(0, 7, f"HRV: {bio['hrv']} ms  |  Sueño: {bio['sleep_score']}/100", ln=True)
-    pdf.image("sleep_chart.png", x=140, y=35, w=40)
+    pdf.cell(0, 5, f"Fecha del Reporte: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align="C")
     
-    pdf.ln(15)
-    pdf.set_font("Helvetica", "B", 14); pdf.cell(0, 10, "Análisis de Carga (GPX Locales):", ln=True)
-    pdf.set_font("Helvetica", "", 12)
-    pdf.cell(0, 7, f"Fitness (CTL): {carga['ctl']:.1f} | Balance (TSB): {carga['tsb']:.1f}", ln=True)
-    pdf.image("load_chart.png", x=10, y=pdf.get_y()+5, w=190)
+    # Sección 1: Métricas de Carga
+    pdf.ln(20)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 16); pdf.cell(0, 10, "Estado de Forma y Carga", ln=True)
+    
+    # Cuadros de métricas
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(60, 20, f"Fitness (CTL): {carga['ctl']:.1f}", 1, 0, 'C', True)
+    pdf.cell(60, 20, f"Fatiga (ATL): {carga['atl']:.1f}", 1, 0, 'C', True)
+    
+    # Color del Balance (TSB)
+    tsb = carga['tsb']
+    if tsb < -15: pdf.set_fill_color(255, 200, 200) # Rojo
+    elif tsb > 5: pdf.set_fill_color(200, 255, 200) # Verde
+    else: pdf.set_fill_color(255, 255, 200) # Amarillo
+    pdf.cell(60, 20, f"Balance (TSB): {tsb:.1f}", 1, 1, 'C', True)
 
-    out_path = f"reporte_offline_{hoy.strftime('%Y%m%d')}.pdf"
-    pdf.output(out_path)
-    return out_path
+    # Gráfico de Carga
+    plt.figure(figsize=(10, 4))
+    plt.plot(carga['hist']["Fecha"], carga['hist']["CTL"], label="Fitness (Forma)", color='#1f77b4', lw=3)
+    plt.fill_between(carga['hist']["Fecha"], carga['hist']["TSB"], color='#ff7f0e', alpha=0.3, label="Balance (Fresco/Cansado)")
+    plt.grid(alpha=0.3); plt.legend()
+    plt.savefig("load.png", dpi=100, bbox_inches='tight')
+    pdf.image("load.png", x=10, y=pdf.get_y()+5, w=190)
+    
+    # Sección 2: Últimas Actividades
+    pdf.ln(75)
+    pdf.set_font("Helvetica", "B", 16); pdf.cell(0, 10, "Últimos Entrenamientos (GPX)", ln=True)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(60, 10, "Fecha", 1); pdf.cell(60, 10, "Distancia", 1); pdf.cell(60, 10, "Duración", 1, 1)
+    pdf.set_font("Helvetica", "", 10)
+    
+    for _, row in df_last.tail(3).iterrows():
+        pdf.cell(60, 10, row['Fecha'].strftime('%d/%m %H:%M'), 1)
+        pdf.cell(60, 10, f"{row['Distancia']:.2f} km", 1)
+        pdf.cell(60, 10, format_duration(row['Duracion']), 1, 1)
+
+    path = "reporte_atleta.pdf"
+    pdf.output(path)
+    return path
 
 def enviar_email(path):
     msg = EmailMessage()
-    msg["Subject"] = f"Reporte Local GPX – {datetime.today().strftime('%d/%m/%Y')}"
+    msg["Subject"] = f"🏃 Reporte de Rendimiento – {datetime.today().strftime('%d/%m')}"
     msg["From"] = os.getenv("GMAIL_EMAIL")
     msg["To"] = os.getenv("GMAIL_TO")
-    msg.set_content("Este reporte fue generado usando tus archivos GPX locales de la carpeta /data.")
+    msg.set_content("Adjunto encuentras el análisis de carga basado en tus archivos locales.")
     with open(path, "rb") as f:
         msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=path)
     with smtplib.SMTP("smtp.gmail.com", 587) as s:
@@ -139,12 +112,8 @@ def enviar_email(path):
         s.send_message(msg)
 
 if __name__ == "__main__":
-    print("🚀 Iniciando Reporte Offline...")
-    df_act = obtener_actividades()
-    if not df_act.empty:
-        carga = calcular_carga(df_act)
-        p_path = generar_pdf(carga, datetime.now(), DATOS_MOCK)
-        enviar_email(p_path)
-        print("✅ Reporte enviado exitosamente usando archivos locales.")
-    else:
-        print("❌ No se encontraron archivos GPX en la carpeta /data.")
+    df = obtener_actividades()
+    if not df.empty:
+        carga = calcular_carga(df)
+        p = generar_pdf(carga, df)
+        enviar_email(p)
