@@ -1,20 +1,24 @@
-name: Garmin Report SaaS
+name: Garmin Report SaaS Elite
 
 on:
   schedule:
+    # Se ejecuta todos los días a las 09:00 UTC (06:00 AM hora Chile)
     - cron: '0 9 * * *'
-  workflow_dispatch: 
+  workflow_dispatch: # Botón para ejecución manual
 
 jobs:
   run-report:
     runs-on: ubuntu-latest
+
     steps:
     - name: 📥 Descargar código
       uses: actions/checkout@v3
+
     - name: 🐍 Configurar Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
+
     - name: 💾 Recuperar Sesión Garmin (Cache)
       uses: actions/cache@v3
       with:
@@ -22,27 +26,31 @@ jobs:
         key: ${{ runner.os }}-garth-${{ github.run_id }}
         restore-keys: |
           ${{ runner.os }}-garth-
+
     - name: 📦 Instalar Librerías
       run: |
         python -m pip install --upgrade pip
-        pip install garminconnect garth gpxpy pandas matplotlib fpdf python-dotenv
-    - name: 🚀 Ejecutar Reporte
+        pip install garminconnect garth gpxpy pandas matplotlib fpdf python-dotenv plotly seaborn
+
+    - name: 🚀 Ejecutar Reporte PDF (Offline)
       env:
-        GARMIN_USER: ${{ secrets.GARMIN_USER }}
-        GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
         GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
         GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         GMAIL_TO: ${{ secrets.GMAIL_TO }}
       run: python reporte_offline.py
-    - name: 🔄 Guardar Sesión Actualizada
-      if: always()
-      uses: actions/cache@v3
-      - name: 🌐 Generar Dashboard Web
+
+    - name: 🌐 Generar Dashboard Web
       run: python generar_web.py
 
     - name: 🚀 Publicar en GitHub Pages
       uses: stefanzweifel/git-auto-commit-action@v4
       with:
-        commit_message: "Update dashboard web"
+        commit_message: "Update dashboard web v6.1"
         file_pattern: index.html
 
+    - name: 🔄 Guardar Sesión Actualizada
+      if: always()
+      uses: actions/cache@v3
+      with:
+        path: .garth
+        key: ${{ runner.os }}-garth-${{ github.run_id }}
