@@ -1,4 +1,4 @@
-import os, glob
+import os, glob, json
 import gpxpy
 import pandas as pd
 import numpy as np
@@ -7,181 +7,141 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 DATA_FOLDER = "data"
+PIN_MAESTRO = "1234" # Este es el PIN que desbloquea el Dashboard
 
-# --- DATOS BIOMÉTRICOS ---
-BIO = {
-    "hrv": 66,
-    "sleep_score": 85,
-    "sueño_fases": {"Profundo": 57, "Ligero": 279, "REM": 103, "Despierto": 7}
+# --- DATOS DE ATLETAS (Simulados para la Demo de Venta) ---
+DATOS_ATLETAS = {
+    "Camilo Gamboa": {"hrv": 66, "sleep": 85, "ctl": 43.1, "atl": 51.5, "tsb": -8.4, "km": 235.1, "fases": {"Profundo": 57, "Ligero": 279, "REM": 103, "Despierto": 7}},
+    "Juan Perez (Pro)": {"hrv": 72, "sleep": 88, "ctl": 65.2, "atl": 70.1, "tsb": -4.9, "km": 312.4, "fases": {"Profundo": 65, "Ligero": 290, "REM": 115, "Despierto": 5}},
+    "Marta Silva": {"hrv": 58, "sleep": 78, "ctl": 28.4, "atl": 22.1, "tsb": 6.3, "km": 145.8, "fases": {"Profundo": 42, "Ligero": 255, "REM": 88, "Despierto": 12}}
 }
 
 def format_dur(minutos):
-    if minutos >= 60:
-        return f"{int(minutos // 60)}h {int(minutos % 60)}m"
+    if minutos >= 60: return f"{int(minutos // 60)}h {int(minutos % 60)}m"
     return f"{int(minutos)}m"
 
-def evaluar_riesgo(tsb, hrv):
-    puntos = 0
-    if tsb < -15: puntos += 40
-    if hrv < 55: puntos += 40
-    # Retorna % de riesgo para el gradiente
-    return min(puntos + 10, 100) 
-
-def obtener_datos():
-    reg = []
-    archivos = glob.glob(os.path.join(DATA_FOLDER, "*.gpx"))
-    for archivo in archivos:
-        try:
-            with open(archivo, 'r') as f:
-                gpx = gpxpy.parse(f)
-            for track in gpx.tracks:
-                bounds = track.get_time_bounds()
-                if bounds.start_time:
-                    reg.append({"Fecha": bounds.start_time.replace(tzinfo=None), 
-                                "Distancia": track.length_2d()/1000, 
-                                "Duracion": track.get_duration()/60})
-        except: continue
-    return pd.DataFrame(reg).sort_values("Fecha") if reg else pd.DataFrame()
-
 def crear_dashboard():
-    df = obtener_datos()
-    hoy = datetime.now()
-    
-    if df.empty:
-        ctl, atl, tsb, total_km, riesgo_pct = 0, 0, 0, 0, 10
-        df_semana = pd.DataFrame()
-    else:
-        df["ATL"] = df["Duracion"].ewm(span=7, adjust=False).mean()
-        df["CTL"] = df["Duracion"].ewm(span=42, adjust=False).mean()
-        df["TSB"] = df["CTL"] - df["ATL"]
-        ctl, atl, tsb = df["CTL"].iloc[-1], df["ATL"].iloc[-1], df["TSB"].iloc[-1]
-        riesgo_pct = evaluar_riesgo(tsb, BIO['hrv'])
-        total_km = df['Distancia'].sum()
+    # Pre-generamos los gráficos para cada atleta en un diccionario de Python
+    html_atletas = {}
+    for nombre, info in DATOS_ATLETAS.items():
+        # Gráfico Sueño
+        fig_s = go.Figure(data=[go.Pie(labels=list(info['fases'].keys()), values=list(info['fases'].values()), hole=0.7, 
+                                      text=[format_dur(v) for v in info['fases'].values()], textinfo='text',
+                                      marker=dict(colors=['#4a90e2', '#74b9ff', '#a29bfe', '#ff7675']))])
+        fig_s.update_layout(template="plotly_dark", height=280, showlegend=True, margin=dict(l=0,r=0,t=0,b=0),
+                           paper_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=-0.2))
         
-        # Filtrar solo semana actual para el gráfico de barras
-        inicio_semana = hoy - timedelta(days=hoy.weekday())
-        df_semana = df[df['Fecha'] >= inicio_semana.replace(hour=0, minute=0)]
+        # Gráfico Rendimiento (Simulado basado en su CTL/ATL)
+        fechas = pd.date_range(end=datetime.now(), periods=10)
+        fig_r = go.Figure()
+        fig_r.add_trace(go.Scatter(x=fechas, y=np.linspace(info['ctl']-5, info['ctl'], 10), name="Fitness", line=dict(color='#00d2ff', width=3)))
+        fig_r.add_trace(go.Scatter(x=fechas, y=np.linspace(info['atl']-8, info['atl'], 10), name="Fatiga", line=dict(color='#ff4b2b', width=2, dash='dot')))
+        fig_r.update_layout(template="plotly_dark", height=250, margin=dict(l=5,r=5,t=10,b=10), paper_bgcolor='rgba(0,0,0,0)', 
+                            plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True))
 
-    config_static = {'responsive': True, 'displayModeBar': False, 'scrollZoom': False}
+        html_atletas[nombre] = {
+            "hrv": info['hrv'], "sleep": info['sleep'], "ctl": info['ctl'], "atl": info['atl'], "tsb": info['tsb'], "km": info['km'],
+            "sueño_html": fig_s.to_html(full_html=False, include_plotlyjs=False),
+            "perf_html": fig_r.to_html(full_html=False, include_plotlyjs=False)
+        }
 
-    # 1. Gráfico de Rendimiento (Líneas + Fechas)
-    fig_perf = go.Figure()
-    if not df.empty:
-        fig_perf.add_trace(go.Scatter(x=df["Fecha"], y=df["CTL"], name="Fitness", line=dict(color='#00d2ff', width=3)))
-        fig_perf.add_trace(go.Scatter(x=df["Fecha"], y=df["ATL"], name="Fatiga", line=dict(color='#ff4b2b', width=2, dash='dot')))
-        fig_perf.add_trace(go.Scatter(x=df["Fecha"], y=df["TSB"], name="Balance", line=dict(color='#6ab04c', width=2)))
-    
-    fig_perf.update_layout(
-        template="plotly_dark", height=300, margin=dict(l=5, r=5, t=10, b=10),
-        legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"),
-        xaxis=dict(fixedrange=True, tickformat="%d/%m", nticks=10),
-        yaxis=dict(fixedrange=True),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
-    )
-
-    # 2. Dona de Sueño (Limpieza de Labels)
-    fases = BIO['sueño_fases']
-    total_sueño = sum(fases.values())
-    labels_clean = [format_dur(v) for v in fases.values()]
-    
-    fig_sleep = go.Figure(data=[go.Pie(
-        labels=list(fases.keys()), 
-        values=list(fases.values()),
-        hole=0.7,
-        text=labels_clean,
-        textinfo='text',
-        hovertemplate="<b>%{label}</b><br>Tiempo: %{text}<extra></extra>",
-        marker=dict(colors=['#4a90e2', '#74b9ff', '#a29bfe', '#ff7675'])
-    )])
-    
-    fig_sleep.update_layout(
-        template="plotly_dark", height=280, margin=dict(l=10, r=10, t=10, b=10),
-        showlegend=True, legend=dict(orientation="h", y=-0.2),
-        paper_bgcolor='rgba(0,0,0,0)',
-        annotations=[dict(text=f"Total<br>{format_dur(total_sueño)}", x=0.5, y=0.5, font_size=18, showarrow=False, font_color="white")]
-    )
-
-    # 3. Kilometraje de la Semana
-    fig_km = go.Figure()
-    if not df_semana.empty:
-        fig_km.add_trace(go.Bar(x=df_semana["Fecha"], y=df_semana["Distancia"], marker_color='#6ab04c'))
-    
-    fig_km.update_layout(
-        template="plotly_dark", height=200, margin=dict(l=5, r=5, t=5, b=5),
-        xaxis=dict(fixedrange=True, tickformat="%a"), 
-        yaxis=dict(fixedrange=True, title="Km"),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
-    )
-
-    # HTML
-    html_content = f"""
+    # --- HTML CON LOGIN Y SELECTOR ---
+    html_final = f"""
     <!DOCTYPE html>
     <html lang="es">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>Dashboard Camilo</title>
+        <title>Coach SaaS | Login</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
         <style>
-            body {{ background-color: #000; color: #fff; font-family: sans-serif; overflow-x: hidden; }}
+            body {{ background: #000; color: #fff; font-family: sans-serif; }}
+            #login-screen {{ position: fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:9999; display:flex; flex-direction:column; justify-content:center; align-items:center; }}
+            .pin-input {{ background: #111; border: 2px solid #333; color: #00d2ff; font-size: 2.5rem; text-align: center; width: 180px; border-radius: 12px; letter-spacing: 8px; outline: none; }}
+            .pin-input:focus {{ border-color: #00d2ff; }}
+            #main-content {{ display: none; padding: 15px; }}
             .box {{ background: #111; border: 1px solid #222; border-radius: 12px; padding: 15px; margin-bottom: 15px; }}
             .card-val {{ background: #1a1a1a; border-radius: 10px; padding: 10px; text-align: center; border-bottom: 3px solid #00d2ff; }}
             .lbl {{ color: #ffffff; font-size: 0.7rem; text-transform: uppercase; font-weight: bold; }}
             .val {{ font-size: 1.3rem; font-weight: 800; display: block; }}
-            h2 {{ font-size: 0.9rem; color: #00d2ff; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; border-bottom: 1px solid #222; }}
-            
-            /* Mapa de Riesgo Difuminado */
-            .risk-container {{ width: 100%; height: 12px; background: linear-gradient(to right, #6ab04c, #f9ca24, #ff4b2b); border-radius: 10px; position: relative; margin-top: 10px; }}
-            .risk-pointer {{ width: 4px; height: 20px; background: #fff; position: absolute; top: -4px; left: {riesgo_pct}%; border-radius: 2px; box-shadow: 0 0 5px #fff; }}
+            select {{ background: #1a1a1a; color: #fff; border: 1px solid #333; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 20px; font-weight: bold; }}
         </style>
     </head>
     <body>
-        <div class="container-fluid py-3">
-            <div class="d-flex justify-content-between align-items-center mb-4 px-2">
-                <h1 class="h4 fw-bold mb-0">CAMILO GAMBOA</h1>
-                <div class="text-end" style="width: 120px;">
-                    <span class="lbl">RIESGO DE LESIÓN</span>
-                    <div class="risk-container"><div class="risk-pointer"></div></div>
-                </div>
-            </div>
-
-            <div class="box">
-                <h2>1. Biometría y Sueño</h2>
-                <div class="row g-2 mb-3">
-                    <div class="col-6"><div class="card-val" style="border-color:#a29bfe"><span class="lbl">VFC / HRV</span><span class="val">{BIO['hrv']} ms</span></div></div>
-                    <div class="col-6"><div class="card-val" style="border-color:#74b9ff"><span class="lbl">Puntaje</span><span class="val">{BIO['sleep_score']}/100</span></div></div>
-                </div>
-                {fig_sleep.to_html(full_html=False, include_plotlyjs='cdn', config=config_static)}
-            </div>
-
-            <div class="box">
-                <h2>2. Rendimiento y Carga</h2>
-                <div class="row g-2 mb-3">
-                    <div class="col-4"><div class="card-val"><span class="lbl">Fitness</span><span class="val">{ctl:.1f}</span></div></div>
-                    <div class="col-4"><div class="card-val" style="border-color:#ff4b2b"><span class="lbl">Fatiga</span><span class="val">{atl:.1f}</span></div></div>
-                    <div class="col-4"><div class="card-val" style="border-color:#6ab04c"><span class="lbl">Balance</span><span class="val">{tsb:.1f}</span></div></div>
-                </div>
-                {fig_perf.to_html(full_html=False, include_plotlyjs=False, config=config_static)}
-            </div>
-
-            <div class="box text-center">
-                <h2>3. Kilómetros Semanales</h2>
-                <div class="mb-3">
-                    <span class="lbl">Total Acumulado</span><br>
-                    <span class="val" style="color:#6ab04c; font-size: 2.2rem;">{total_km:.1f} km</span>
-                </div>
-                {fig_km.to_html(full_html=False, include_plotlyjs=False, config=config_static)}
-            </div>
-
-            <footer class="text-center text-muted py-3" style="font-size: 0.6rem;">
-                Actualizado: {datetime.now().strftime('%d/%m %H:%M')}
-            </footer>
+        <div id="login-screen">
+            <h1 class="h4 mb-4 fw-bold">PANEL DEL ENTRENADOR</h1>
+            <p class="text-muted mb-3">Ingrese PIN de Acceso</p>
+            <input type="password" id="pinField" class="pin-input" maxlength="4" autocomplete="off">
+            <p id="errorMsg" class="text-danger mt-3" style="display:none;">PIN Incorrecto</p>
         </div>
+
+        <div id="main-content">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h5 fw-bold mb-0">ATLETISMO ELITE</h1>
+                <span class="badge bg-primary">MODO COACH</span>
+            </div>
+
+            <select id="atletaSelector">
+                {"".join([f'<option value="{n}">{n}</option>' for n in html_atletas.keys()])}
+            </select>
+
+            <div id="dinamico"></div>
+        </div>
+
+        <script>
+            const datos = {json.dumps(html_atletas)};
+            const pinCorrecto = "{PIN_MAESTRO}";
+            
+            // Lógica de Login
+            document.getElementById('pinField').addEventListener('keyup', function() {{
+                if(this.value === pinCorrecto) {{
+                    document.getElementById('login-screen').style.display = 'none';
+                    document.getElementById('main-content').style.display = 'block';
+                    actualizar('Camilo Gamboa');
+                }} else if(this.value.length === 4) {{
+                    document.getElementById('errorMsg').style.display = 'block';
+                    this.value = '';
+                }}
+            }});
+
+            // Lógica de Actualización
+            function actualizar(nombre) {{
+                const a = datos[nombre];
+                const html = `
+                    <div class="box">
+                        <h2>1. Biometría</h2>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6"><div class="card-val" style="border-color:#a29bfe"><span class="lbl">VFC / HRV</span><span class="val">${{a.hrv}} ms</span></div></div>
+                            <div class="col-6"><div class="card-val" style="border-color:#74b9ff"><span class="lbl">Sueño</span><span class="val">${{a.sleep}}/100</span></div></div>
+                        </div>
+                        ${{a.sueño_html}}
+                    </div>
+                    <div class="box">
+                        <h2>2. Carga y Forma</h2>
+                        <div class="row g-2 mb-3">
+                            <div class="col-4"><div class="card-val"><span class="lbl">Fitness</span><span class="val">${{a.ctl.toFixed(1)}}</span></div></div>
+                            <div class="col-4"><div class="card-val" style="border-color:#ff4b2b"><span class="lbl">Fatiga</span><span class="val">${{a.atl.toFixed(1)}}</span></div></div>
+                            <div class="col-4"><div class="card-val" style="border-color:#6ab04c"><span class="lbl">Balance</span><span class="val">${{a.tsb.toFixed(1)}}</span></div></div>
+                        </div>
+                        ${{a.perf_html}}
+                    </div>
+                    <div class="box text-center">
+                        <h2>3. Volumen Total</h2>
+                        <span class="val" style="color:#6ab04c; font-size: 2.5rem;">${{a.km.toFixed(1)}} km</span>
+                    </div>
+                `;
+                document.getElementById('dinamico').innerHTML = html;
+                window.dispatchEvent(new Event('resize'));
+            }
+
+            document.getElementById('atletaSelector').addEventListener('change', (e) => actualizar(e.target.value));
+        </script>
     </body>
     </html>
     """
     with open("index.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
+        f.write(html_final)
 
 if __name__ == "__main__":
     crear_dashboard()
