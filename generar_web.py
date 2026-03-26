@@ -23,12 +23,14 @@ def format_dur(minutos):
 def crear_dashboard():
     html_atletas = {}
     for nombre, info in DATOS_ATLETAS.items():
+        # Gráfico Sueño
         fig_s = go.Figure(data=[go.Pie(labels=list(info['fases'].keys()), values=list(info['fases'].values()), hole=0.7, 
                                       text=[format_dur(v) for v in info['fases'].values()], textinfo='text',
                                       marker=dict(colors=['#4a90e2', '#74b9ff', '#a29bfe', '#ff7675']))])
         fig_s.update_layout(template="plotly_dark", height=280, showlegend=True, margin=dict(l=0,r=0,t=0,b=0),
                            paper_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=-0.2))
         
+        # Gráfico Rendimiento
         fechas = pd.date_range(end=datetime.now(), periods=10)
         fig_r = go.Figure()
         fig_r.add_trace(go.Scatter(x=fechas, y=np.linspace(info['ctl']-5, info['ctl'], 10), name="Fitness", line=dict(color='#00d2ff', width=3)))
@@ -68,7 +70,7 @@ def crear_dashboard():
     <body>
         <div id="login-screen">
             <h1 class="h4 mb-4 fw-bold">PANEL DEL ENTRENADOR</h1>
-            <input type="password" id="pinField" class="pin-input" maxlength="4" placeholder="PIN" autocomplete="off">
+            <input type="password" id="pinField" class="pin-input" maxlength="4" placeholder="PIN">
             <button id="btnAcceder" class="btn btn-outline-info mt-4 px-5">Acceder</button>
             <p id="errorMsg" class="text-danger mt-3" style="display:none;">PIN Incorrecto</p>
         </div>
@@ -76,43 +78,46 @@ def crear_dashboard():
         <div id="main-content">
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <h1 class="h5 fw-bold mb-0">ATLETISMO ELITE</h1>
-                <span class="badge bg-primary">MODO COACH</span>
+                <button onclick="location.reload()" class="btn btn-sm btn-outline-secondary">Salir</button>
             </div>
             <select id="atletaSelector">VAR_OPTIONS</select>
             <div id="dinamico"></div>
         </div>
 
         <script>
-            const datosAtletas = VAR_JSON;
-            const pinValido = "VAR_PIN";
+            // Datos inyectados desde Python
+            const dAtletas = VAR_JSON;
+            const pValido = "VAR_PIN";
 
-            function entrar() {
-                const input = document.getElementById('pinField').value;
-                if(input === pinValido) {
+            function checkAccess() {
+                const val = document.getElementById('pinField').value;
+                console.log("Intentando acceder con PIN...");
+                
+                if(val === pValido) {
                     document.getElementById('login-screen').style.display = 'none';
                     document.getElementById('main-content').style.display = 'block';
-                    actualizarAtleta('Camilo Gamboa');
+                    updateDashboard('Camilo Gamboa');
                 } else {
                     document.getElementById('errorMsg').style.display = 'block';
                     document.getElementById('pinField').value = '';
                 }
             }
 
-            document.getElementById('btnAcceder').onclick = entrar;
-            document.getElementById('pinField').onkeypress = (e) => { if(e.key === 'Enter') entrar(); };
+            document.getElementById('btnAcceder').onclick = checkAccess;
+            document.getElementById('pinField').onkeyup = (e) => { if(e.key === 'Enter') checkAccess(); };
 
-            function actualizarAtleta(nombre) {
-                const a = datosAtletas[nombre];
+            function updateDashboard(n) {
+                const a = dAtletas[n];
                 if(!a) return;
-                
-                document.getElementById('dinamico').innerHTML = `
+
+                const content = `
                     <div class="box">
                         <h2>1. Biometría</h2>
                         <div class="row g-2 mb-3">
                             <div class="col-6"><div class="card-val" style="border-color:#a29bfe"><span class="lbl">VFC / HRV</span><span class="val">${a.hrv} ms</span></div></div>
                             <div class="col-6"><div class="card-val" style="border-color:#74b9ff"><span class="lbl">Sueño</span><span class="val">${a.sleep}/100</span></div></div>
                         </div>
-                        ${a.sueño_html}
+                        <div class="chart-container">${a.sueño_html}</div>
                     </div>
                     <div class="box">
                         <h2>2. Carga y Forma</h2>
@@ -121,18 +126,25 @@ def crear_dashboard():
                             <div class="col-4"><div class="card-val" style="border-color:#ff4b2b"><span class="lbl">Fatiga</span><span class="val">${a.atl.toFixed(1)}</span></div></div>
                             <div class="col-4"><div class="card-val" style="border-color:#6ab04c"><span class="lbl">Balance</span><span class="val">${a.tsb.toFixed(1)}</span></div></div>
                         </div>
-                        ${a.perf_html}
+                        <div class="chart-container">${a.perf_html}</div>
                     </div>
                     <div class="box text-center">
                         <h2>3. Volumen Total</h2>
                         <span class="val" style="color:#6ab04c; font-size: 2.5rem;">${a.km.toFixed(1)} km</span>
                     </div>
                 `;
-                // Pequeño delay para que Plotly renderice bien en el nuevo contenedor visible
-                setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
+                document.getElementById('dinamico').innerHTML = content;
+                
+                // Ejecutar scripts internos de Plotly cargados en el HTML inyectado
+                const scripts = document.getElementById('dinamico').getElementsByTagName('script');
+                for (let i = 0; i < scripts.length; i++) {
+                    eval(scripts[i].innerText);
+                }
+                
+                setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 200);
             }
 
-            document.getElementById('atletaSelector').onchange = (e) => actualizarAtleta(e.target.value);
+            document.getElementById('atletaSelector').onchange = (e) => updateDashboard(e.target.value);
         </script>
     </body>
     </html>
