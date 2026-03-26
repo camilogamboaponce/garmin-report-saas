@@ -1,115 +1,53 @@
-import os, json
+import os, glob, json
+import gpxpy
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
+import plotly.express as px
+from datetime import datetime, timedelta
 
 DATA_FOLDER = "data"
 PIN_MAESTRO = "1234" 
 
-# --- DATOS DE ATLETAS ---
+# --- DATOS DE ATLETAS (Simulados) ---
 DATOS_ATLETAS = {
-    "Camilo Gamboa": {"hrv": 66, "sleep": 85, "ctl": 43.1, "atl": 51.5, "tsb": -8.4, "km": 235.1},
-    "Juan Perez (Pro)": {"hrv": 72, "sleep": 88, "ctl": 65.2, "atl": 70.1, "tsb": -4.9, "km": 312.4},
-    "Marta Silva": {"hrv": 58, "sleep": 78, "ctl": 28.4, "atl": 22.1, "tsb": 6.3, "km": 145.8}
+    "Camilo Gamboa": {"hrv": 66, "sleep": 85, "ctl": 43.1, "atl": 51.5, "tsb": -8.4, "km": 235.1, "fases": {"Profundo": 57, "Ligero": 279, "REM": 103, "Despierto": 7}},
+    "Juan Perez (Pro)": {"hrv": 72, "sleep": 88, "ctl": 65.2, "atl": 70.1, "tsb": -4.9, "km": 312.4, "fases": {"Profundo": 65, "Ligero": 290, "REM": 115, "Despierto": 5}},
+    "Marta Silva": {"hrv": 58, "sleep": 78, "ctl": 28.4, "atl": 22.1, "tsb": 6.3, "km": 145.8, "fases": {"Profundo": 42, "Ligero": 255, "REM": 88, "Despierto": 12}}
 }
 
+def format_dur(minutos):
+    if minutos >= 60: return f"{int(minutos // 60)}h {int(minutos % 60)}m"
+    return f"{int(minutos)}m"
+
 def crear_dashboard():
-    # 1. Generar los gráficos por separado (evita saturar el JSON)
+    # Pre-generamos los gráficos para cada atleta y los guardamos en JSON
     # Solo simulamos una tendencia para la demo
     fechas = pd.date_range(end=datetime.now(), periods=10).strftime('%d/%m').tolist()
     
-    options_html = "".join([f'<option value="{n}">{n}</option>' for n in DATOS_ATLETAS.keys()])
+    html_atletas = {}
+    for nombre, info in DATOS_ATLETAS.items():
+        # Gráfico Rendimiento (Tendencia Simulada)
+        fig_r = go.Figure()
+        fig_r.add_trace(go.Scatter(x=fechas, y=np.linspace(info['ctl']-5, info['ctl'], 10), name="Fitness", line=dict(color='#00d2ff', width=3)))
+        fig_r.add_trace(go.Scatter(x=fechas, y=np.linspace(info['atl']-8, info['atl'], 10), name="Fatiga", line=dict(color='#ff4b2b', width=2, dash='dot')))
+        fig_r.add_trace(go.Bar(x=fechas, y=np.linspace(info['tsb']-2, info['tsb']+2, 10), name="Balance", marker_color='#6ab04c', opacity=0.3))
+        
+        fig_r.update_layout(template="plotly_dark", height=280, margin=dict(l=10,r=10,t=10,b=10), paper_bgcolor='rgba(0,0,0,0)', 
+                            plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(fixedrange=True, nticks=10), yaxis=dict(fixedrange=True))
 
+        html_atletas[nombre] = {
+            "perf_html": fig_r.to_html(full_html=False, include_plotlyjs=False)
+        }
+
+    # --- HTML CON LLAVES ESCAPADAS {{ }} PARA PYTHON ---
+    options_atleta = "".join([f'<option value="{n}">{n}</option>' for n in DATOS_ATLETAS.keys()])
+    
     html_template = """
     <!DOCTYPE html>
     <html lang="es">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>SaaS Coach | Camilo Gamboa</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <style>
-            body { background: #000; color: #fff; font-family: sans-serif; }
-            #login-screen { position: fixed; inset: 0; background: #000; z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-            .pin-input { background: #111; border: 2px solid #333; color: #00d2ff; font-size: 2rem; text-align: center; width: 160px; border-radius: 10px; letter-spacing: 5px; }
-            #main-content { display: none; padding: 20px; }
-            .box { background: #111; border: 1px solid #222; border-radius: 12px; padding: 15px; margin-bottom: 15px; text-align: center; }
-            .val { font-size: 1.5rem; font-weight: bold; color: #00d2ff; display: block; }
-            .lbl { font-size: 0.7rem; color: #888; text-transform: uppercase; }
-        </style>
-    </head>
-    <body>
-
-    <div id="login-screen">
-        <h2 class="mb-4">PANEL COACH</h2>
-        <input type="password" id="pin" class="pin-input" maxlength="4" placeholder="PIN">
-        <button onclick="validar()" class="btn btn-info mt-4 w-50">ENTRAR</button>
-        <p id="err" class="text-danger mt-3" style="display:none;">PIN Incorrecto</p>
-    </div>
-
-    <div id="main-content" class="container">
-        <div class="d-flex justify-content-between mb-4">
-            <h1 class="h4">EQUIPO ELITE</h1>
-            <button onclick="location.reload()" class="btn btn-sm btn-outline-danger">Salir</button>
-        </div>
-        
-        <select id="selector" class="form-select bg-dark text-white border-secondary mb-4">
-            VAR_OPTIONS
-        </select>
-
-        <div id="dashboard">
-            </div>
-    </div>
-
-    <script>
-        const pinCorrecto = "VAR_PIN";
-        const atletas = VAR_JSON;
-
-        function validar() {
-            const ingreso = document.getElementById('pin').value;
-            if(ingreso === pinCorrecto) {
-                document.getElementById('login-screen').style.display = 'none';
-                document.getElementById('main-content').style.display = 'block';
-                render('Camilo Gamboa');
-            } else {
-                document.getElementById('err').style.display = 'block';
-                document.getElementById('pin').value = '';
-            }
-        }
-
-        // Permitir Enter
-        document.getElementById('pin').onkeypress = (e) => { if(e.key === 'Enter') validar(); };
-
-        function render(nombre) {
-            const a = atletas[nombre];
-            const html = `
-                <div class="row g-2">
-                    <div class="col-6"><div class="box"><span class="lbl">HRV</span><span class="val">${a.hrv} ms</span></div></div>
-                    <div class="col-6"><div class="box"><span class="lbl">Sueño</span><span class="val">${a.sleep}/100</span></div></div>
-                    <div class="col-4"><div class="box"><span class="lbl">Fitness</span><span class="val">${a.ctl}</span></div></div>
-                    <div class="col-4"><div class="box"><span class="lbl">Fatiga</span><span class="val">${a.atl}</span></div></div>
-                    <div class="col-4"><div class="box"><span class="lbl">Balance</span><span class="val">${a.tsb}</span></div></div>
-                    <div class="col-12"><div class="box" style="border-color:#6ab04c"><span class="lbl">Total Km</span><span class="val" style="font-size:2.5rem">${a.km} km</span></div></div>
-                </div>
-                <div class="mt-4 text-center text-muted small">Gráficos interactivos cargando para ${nombre}...</div>
-            `;
-            document.getElementById('dashboard').innerHTML = html;
-        }
-
-        document.getElementById('selector').onchange = (e) => render(e.target.value);
-    </script>
-    </body>
-    </html>
-    """
-
-    # Reemplazo limpio de variables
-    res = html_template.replace("VAR_PIN", PIN_MAESTRO)
-    res = res.replace("VAR_OPTIONS", options_html)
-    res = res.replace("VAR_JSON", json.dumps(DATOS_ATLETAS))
-
-    with open("index.html", "w", encoding="utf-8") as f:
-        f.write(res)
-
-if __name__ == "__main__":
-    crear_dashboard()
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>SaaS Coach | Dashboard</title>
+        <link href="
