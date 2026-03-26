@@ -50,7 +50,7 @@ def crear_dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>Coach SaaS | Panel de Control</title>
+        <title>Coach SaaS | Panel</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
         <style>
@@ -69,7 +69,7 @@ def crear_dashboard():
         <div id="login-screen">
             <h1 class="h4 mb-4 fw-bold">PANEL DEL ENTRENADOR</h1>
             <input type="password" id="pinField" class="pin-input" maxlength="4" placeholder="PIN" autocomplete="off">
-            <button onclick="checkPin()" class="btn btn-outline-info mt-4 px-5">Acceder</button>
+            <button id="btnAcceder" class="btn btn-outline-info mt-4 px-5">Acceder</button>
             <p id="errorMsg" class="text-danger mt-3" style="display:none;">PIN Incorrecto</p>
         </div>
 
@@ -83,28 +83,28 @@ def crear_dashboard():
         </div>
 
         <script>
-            const datos = VAR_JSON;
-            const pinCorrecto = "VAR_PIN";
+            const datosAtletas = VAR_JSON;
+            const pinValido = "VAR_PIN";
 
-            function checkPin() {
-                const pin = document.getElementById('pinField').value;
-                if(pin === pinCorrecto) {
+            function entrar() {
+                const input = document.getElementById('pinField').value;
+                if(input === pinValido) {
                     document.getElementById('login-screen').style.display = 'none';
                     document.getElementById('main-content').style.display = 'block';
-                    actualizar('Camilo Gamboa');
+                    actualizarAtleta('Camilo Gamboa');
                 } else {
                     document.getElementById('errorMsg').style.display = 'block';
                     document.getElementById('pinField').value = '';
                 }
             }
 
-            // Escuchar tecla Enter
-            document.getElementById('pinField').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') checkPin();
-            });
+            document.getElementById('btnAcceder').onclick = entrar;
+            document.getElementById('pinField').onkeypress = (e) => { if(e.key === 'Enter') entrar(); };
 
-            function actualizar(nombre) {
-                const a = datos[nombre];
+            function actualizarAtleta(nombre) {
+                const a = datosAtletas[nombre];
+                if(!a) return;
+                
                 document.getElementById('dinamico').innerHTML = `
                     <div class="box">
                         <h2>1. Biometría</h2>
@@ -128,9 +128,11 @@ def crear_dashboard():
                         <span class="val" style="color:#6ab04c; font-size: 2.5rem;">${a.km.toFixed(1)} km</span>
                     </div>
                 `;
-                window.dispatchEvent(new Event('resize'));
+                // Pequeño delay para que Plotly renderice bien en el nuevo contenedor visible
+                setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 100);
             }
-            document.getElementById('atletaSelector').addEventListener('change', (e) => actualizar(e.target.value));
+
+            document.getElementById('atletaSelector').onchange = (e) => actualizarAtleta(e.target.value);
         </script>
     </body>
     </html>
