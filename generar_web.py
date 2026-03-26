@@ -7,7 +7,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 DATA_FOLDER = "data"
-PIN_MAESTRO = "1234" # Este es el PIN que desbloquea el Dashboard
+PIN_MAESTRO = "1234" 
 
 # --- DATOS DE ATLETAS (Simulados para la Demo de Venta) ---
 DATOS_ATLETAS = {
@@ -21,7 +21,6 @@ def format_dur(minutos):
     return f"{int(minutos)}m"
 
 def crear_dashboard():
-    # Pre-generamos los gráficos para cada atleta en un diccionario de Python
     html_atletas = {}
     for nombre, info in DATOS_ATLETAS.items():
         # Gráfico Sueño
@@ -31,7 +30,7 @@ def crear_dashboard():
         fig_s.update_layout(template="plotly_dark", height=280, showlegend=True, margin=dict(l=0,r=0,t=0,b=0),
                            paper_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=-0.2))
         
-        # Gráfico Rendimiento (Simulado basado en su CTL/ATL)
+        # Gráfico Rendimiento (Simulado)
         fechas = pd.date_range(end=datetime.now(), periods=10)
         fig_r = go.Figure()
         fig_r.add_trace(go.Scatter(x=fechas, y=np.linspace(info['ctl']-5, info['ctl'], 10), name="Fitness", line=dict(color='#00d2ff', width=3)))
@@ -45,7 +44,9 @@ def crear_dashboard():
             "perf_html": fig_r.to_html(full_html=False, include_plotlyjs=False)
         }
 
-    # --- HTML CON LOGIN Y SELECTOR ---
+    json_datos = json.dumps(html_atletas)
+
+    # --- HTML CON LLAVES ESCAPADAS {{ }} PARA PYTHON ---
     html_final = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -90,10 +91,9 @@ def crear_dashboard():
         </div>
 
         <script>
-            const datos = {json.dumps(html_atletas)};
+            const datos = {json_datos};
             const pinCorrecto = "{PIN_MAESTRO}";
             
-            // Lógica de Login
             document.getElementById('pinField').addEventListener('keyup', function() {{
                 if(this.value === pinCorrecto) {{
                     document.getElementById('login-screen').style.display = 'none';
@@ -105,7 +105,6 @@ def crear_dashboard():
                 }}
             }});
 
-            // Lógica de Actualización
             function actualizar(nombre) {{
                 const a = datos[nombre];
                 const html = `
